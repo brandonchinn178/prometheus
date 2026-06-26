@@ -9,6 +9,7 @@ module System.Metrics.Prometheus.Metric.Histogram (
     observe,
     sample,
     observeAndSample,
+    reset,
 ) where
 
 import Control.Applicative ((<$>))
@@ -17,6 +18,7 @@ import Data.Bool (bool)
 import Data.IORef (
     IORef,
     atomicModifyIORef',
+    modifyIORef',
     newIORef,
     readIORef,
  )
@@ -71,3 +73,12 @@ updateBuckets x = Map.mapWithKey updateBucket
 
 sample :: Histogram -> IO HistogramSample
 sample = readIORef . unHistogram
+
+
+reset :: Histogram -> IO ()
+reset (Histogram ref) = modifyIORef' ref $ \histData ->
+    histData
+        { histBuckets = 0 <$ histBuckets histData
+        , histSum = 0
+        , histCount = 0
+        }

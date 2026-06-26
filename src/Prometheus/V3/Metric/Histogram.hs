@@ -18,6 +18,7 @@ module Prometheus.V3.Metric.Histogram (
 
     -- * Methods
     IsHistogram,
+    reset,
     observe,
     sample,
     observeAndSample,
@@ -109,6 +110,11 @@ instance IsHistogram V2.Histogram where
     getHistogram = pure
 instance IsHistogram (IO V2.Histogram) where
     getHistogram = id
+
+
+reset :: (IsHistogram h, MonadIO m) => h -> m ()
+reset h = liftIO $ V2.reset =<< getHistogram h
+{-# INLINE reset #-}
 
 
 observe :: (IsHistogram h, MonadIO m) => h -> Double -> m ()
