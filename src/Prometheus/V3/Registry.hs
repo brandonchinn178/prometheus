@@ -59,21 +59,22 @@ class ToCollector a where
     getCollectorName :: a -> MetricName
     getCollectorDescription :: a -> Description
     getCollectorType :: a -> MetricType
-    getCollectorSample :: a -> IO (IO [Sample], RegisterResult a)
+    initCollectorResult :: a -> IO (RegisterResult a)
+    getCollectorSample :: a -> RegisterResult a -> IO [Sample]
 instance ToCollector Collector where
     type RegisterResult Collector = Collector
     getCollectorName = (.name)
     getCollectorDescription = (.description)
     getCollectorType = (.type_)
-    getCollectorSample collector = pure (collector.getSamples, collector)
+    initCollectorResult = pure
+    getCollectorSample _ = (.getSamples)
 instance (IsMetric a) => ToCollector (Metric a) where
     type RegisterResult (Metric a) = a
     getCollectorName = (.name)
     getCollectorDescription = (.description)
     getCollectorType _ = getMetricType (Proxy @a)
-    getCollectorSample metric = do
-        a <- metric.initialize
-        pure (getMetricSamples a, a)
+    initCollectorResult = (.initialize)
+    getCollectorSample _ = getMetricSamples
 
 
 -- | Register the given metric with the global registry.
@@ -87,12 +88,16 @@ register = unsafePerformIO . registerTo globalRegistry
 -- | Register the given metric with the given registry.
 registerTo :: (ToCollector a) => Registry -> a -> IO (RegisterResult a)
 registerTo (Registry registryMapRef) a = do
-    let name = getCollectorName a
-        description = getCollectorDescription a
-        type_ = getCollectorType a
-    (getSamples, res) <- getCollectorSample a
+    res <- initCollectorResult a
+    let collector =
+            Collector
+                { name = getCollectorName a
+                , description = getCollectorDescription a
+                , type_ = getCollectorType a
+                , getSamples = getCollectorSample a res
+                }
     atomicModifyIORef' registryMapRef $ \registryMap ->
-        (Map.insertWithKey collision name Collector{..} registryMap, ())
+        (Map.insertWithKey collision collector.name collector registryMap, ())
     pure res
   where
     collision k _ _ = impureThrow (MetricRegisteredMultipleTimesError k)
