@@ -53,6 +53,28 @@
 --   Prom.serveMetrics 9090 -- Serves metrics on separate thread
 -- @
 --
+-- === Alternative: Avoid OPAQUE pragma
+--
+-- To avoid the OPAQUE pragma, you could define metrics without registering,
+-- and then it'll be registered on first usage. The downside is that on
+-- subsequent usages, there's a slight cost to look up the metric from the
+-- registry.
+--
+-- @
+-- fooCounter :: Prom.Metric Prom.Counter
+-- fooCounter = Counter.new "foo_total" "Number of foos"
+--
+-- myHandler req = do
+--   -- Internally runs Registry.getOrRegister
+--   Counter.inc fooCounter
+--
+--   -- Manually fetch counter first
+--   c <- Counter.load fooCounter
+--   Counter.inc c
+-- @
+--
+-- === Alternative: Manual registration
+--
 -- Alternatively, you could initialize metrics in IO and pass it to your
 -- functions as normal (e.g. Reader monad, as a function arg, etc.):
 --
@@ -60,6 +82,8 @@
 -- registry <- Prom.newRegistry
 -- fooCounter <- Prom.registerTo registry $ Counter.new "foo_counter" ""
 -- @
+--
+-- == Custom collectors
 --
 -- For advanced use-cases, you can also construct your own
 -- 'Prometheus.V3.Collector.Collector' manually and register it to the registry.

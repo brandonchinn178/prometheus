@@ -16,7 +16,7 @@ module Prometheus.V3.Metric.Histogram (
     expBuckets,
 
     -- * Methods
-    IsHistogram,
+    IsHistogram (..),
     reset,
     observe,
     sample,
@@ -121,30 +121,32 @@ expBuckets start factor count
 
 
 class IsHistogram h where
-    getHistogram :: h -> IO V2.Histogram
+    load :: h -> IO V2.Histogram
 instance IsHistogram V2.Histogram where
-    getHistogram = pure
+    load = pure
 instance IsHistogram (IO V2.Histogram) where
-    getHistogram = id
+    load = id
+instance IsHistogram (Metric V2.Histogram) where
+    load = Registry.getOrRegister
 
 
 reset :: (IsHistogram h, MonadIO m) => h -> m ()
-reset h = liftIO $ V2.reset =<< getHistogram h
+reset h = liftIO $ V2.reset =<< load h
 {-# INLINE reset #-}
 
 
 observe :: (IsHistogram h, MonadIO m) => h -> Double -> m ()
-observe h x = liftIO $ V2.observe x =<< getHistogram h
+observe h x = liftIO $ V2.observe x =<< load h
 {-# INLINE observe #-}
 
 
 sample :: (IsHistogram h, MonadIO m) => h -> m V2.HistogramSample
-sample h = liftIO $ V2.sample =<< getHistogram h
+sample h = liftIO $ V2.sample =<< load h
 {-# INLINE sample #-}
 
 
 observeAndSample :: (IsHistogram h, MonadIO m) => h -> Double -> m V2.HistogramSample
-observeAndSample h x = liftIO $ V2.observeAndSample x =<< getHistogram h
+observeAndSample h x = liftIO $ V2.observeAndSample x =<< load h
 {-# INLINE observeAndSample #-}
 
 

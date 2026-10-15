@@ -15,7 +15,7 @@ module Prometheus.V3.Metric.Gauge (
     newAt,
 
     -- * Methods
-    IsGauge,
+    IsGauge (..),
     IsNumGauge,
     inc,
     add,
@@ -36,6 +36,7 @@ module Prometheus.V3.Metric.Gauge (
 
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Typeable (Typeable)
 import Prometheus.V3.Metric.Base
 import Prometheus.V3.Metric.Labelled (labels)
 import qualified Prometheus.V3.Registry as Registry
@@ -59,7 +60,7 @@ import UnliftIO.Exception (bracket_)
 -- == Warnings
 --
 --   * Will not work correctly if gauge type is polymorphic
-register :: (Num a, ToSampleValue a) => MetricName -> Description -> V2.Gauge a
+register :: (Num a, ToSampleValue a, Typeable a) => MetricName -> Description -> V2.Gauge a
 register name description = Registry.register $ new name description
 {-# INLINE register #-}
 
@@ -89,50 +90,53 @@ instance (SampleValueNum a) => IsMetric (V2.Gauge a) where
 
 class IsGauge g where
     type GaugeElem g
-    getGauge :: g -> IO (V2.Gauge (GaugeElem g))
+    load :: g -> IO (V2.Gauge (GaugeElem g))
 instance IsGauge (V2.Gauge a) where
     type GaugeElem (V2.Gauge a) = a
-    getGauge = pure
+    load = pure
 instance IsGauge (IO (V2.Gauge a)) where
     type GaugeElem (IO (V2.Gauge a)) = a
-    getGauge = id
+    load = id
+instance (SampleValueNum a, Typeable a) => IsGauge (Metric (V2.Gauge a)) where
+    type GaugeElem (Metric (V2.Gauge a)) = a
+    load = Registry.getOrRegister
 
 
 type IsNumGauge g a = (IsGauge g, a ~ GaugeElem g, Num a)
 
 
 inc :: (IsNumGauge g a, MonadIO m) => g -> m ()
-inc g = liftIO $ V2.inc =<< getGauge g
+inc g = liftIO $ V2.inc =<< load g
 {-# INLINE inc #-}
 
 
 add :: (IsNumGauge g a, MonadIO m) => g -> a -> m ()
-add g x = liftIO $ V2.add x =<< getGauge g
+add g x = liftIO $ V2.add x =<< load g
 {-# INLINE add #-}
 
 
 dec :: (IsNumGauge g a, MonadIO m) => g -> m ()
-dec g = liftIO $ V2.dec =<< getGauge g
+dec g = liftIO $ V2.dec =<< load g
 {-# INLINE dec #-}
 
 
 sub :: (IsNumGauge g a, MonadIO m) => g -> a -> m ()
-sub g x = liftIO $ V2.sub x =<< getGauge g
+sub g x = liftIO $ V2.sub x =<< load g
 {-# INLINE sub #-}
 
 
 set :: (IsNumGauge g a, MonadIO m) => g -> a -> m ()
-set g x = liftIO $ V2.set x =<< getGauge g
+set g x = liftIO $ V2.set x =<< load g
 {-# INLINE set #-}
 
 
 sample :: (IsNumGauge g a, MonadIO m) => g -> m a
-sample g = liftIO $ fmap V2.unGaugeSample . V2.sample =<< getGauge g
+sample g = liftIO $ fmap V2.unGaugeSample . V2.sample =<< load g
 {-# INLINE sample #-}
 
 
 modifyAndSample :: (IsNumGauge g a, MonadIO m) => g -> (a -> a) -> m a
-modifyAndSample g f = liftIO $ fmap V2.unGaugeSample . V2.modifyAndSample f =<< getGauge g
+modifyAndSample g f = liftIO $ fmap V2.unGaugeSample . V2.modifyAndSample f =<< load g
 {-# INLINE modifyAndSample #-}
 
 
@@ -144,7 +148,7 @@ setToCurrentTime ::
     g -> m ()
 setToCurrentTime g = do
     now <- liftIO getPOSIXTime
-    g' <- liftIO $ getGauge g
+    g' <- liftIO $ load g
     set g' (fromRealFrac now)
 {-# INLINE setToCurrentTime #-}
 

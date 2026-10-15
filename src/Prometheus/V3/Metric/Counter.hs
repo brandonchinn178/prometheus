@@ -18,7 +18,7 @@ module Prometheus.V3.Metric.Counter (
     new,
 
     -- * Methods
-    IsCounter,
+    IsCounter (..),
     IsNumCounter,
     inc,
     add,
@@ -36,6 +36,7 @@ module Prometheus.V3.Metric.Counter (
 
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Data.Typeable (Typeable)
 import Prometheus.V3.Metric.Base
 import Prometheus.V3.Metric.Labelled (labels)
 import qualified Prometheus.V3.Registry as Registry
@@ -59,7 +60,7 @@ import UnliftIO.Exception (Exception, withException)
 --
 --   * Will not work correctly if counter type is polymorphic
 register ::
-    (Num a, Ord a, ToSampleValue a, V2.HasCounterBackend a) =>
+    (Num a, Ord a, ToSampleValue a, V2.HasCounterBackend a, Typeable a) =>
     MetricName -> Description -> (V2.Counter' a)
 register name description = Registry.register $ new name description
 {-# INLINE register #-}
@@ -85,13 +86,16 @@ instance (SampleValueNum a, Ord a, V2.HasCounterBackend a) => IsMetric (V2.Count
 
 class IsCounter c where
     type CounterElem c
-    getCounter :: c -> IO (V2.Counter' (CounterElem c))
+    load :: c -> IO (V2.Counter' (CounterElem c))
 instance IsCounter (V2.Counter' a) where
     type CounterElem (V2.Counter' a) = a
-    getCounter = pure
+    load = pure
 instance IsCounter (IO (V2.Counter' a)) where
     type CounterElem (IO (V2.Counter' a)) = a
-    getCounter = id
+    load = id
+instance (SampleValueNum a, Ord a, V2.HasCounterBackend a, Typeable a) => IsCounter (Metric (V2.Counter' a)) where
+    type CounterElem (Metric (V2.Counter' a)) = a
+    load = Registry.getOrRegister
 
 
 type IsNumCounter c a =
@@ -104,27 +108,27 @@ type IsNumCounter c a =
 
 
 inc :: (IsNumCounter c a, MonadIO m) => c -> m ()
-inc c = liftIO $ V2.inc =<< getCounter c
+inc c = liftIO $ V2.inc =<< load c
 {-# INLINE inc #-}
 
 
 add :: (IsNumCounter c a, MonadIO m) => c -> a -> m ()
-add c n = liftIO $ V2.add n =<< getCounter c
+add c n = liftIO $ V2.add n =<< load c
 {-# INLINE add #-}
 
 
 reset :: (IsNumCounter c a, MonadIO m) => c -> m ()
-reset c = liftIO $ V2.set 0 =<< getCounter c
+reset c = liftIO $ V2.set 0 =<< load c
 {-# INLINE reset #-}
 
 
 sample :: (IsNumCounter c a, MonadIO m) => c -> m a
-sample c = liftIO $ fmap V2.unCounterSample . V2.sample =<< getCounter c
+sample c = liftIO $ fmap V2.unCounterSample . V2.sample =<< load c
 {-# INLINE sample #-}
 
 
 addAndSample :: (IsNumCounter c a, MonadIO m) => c -> a -> m a
-addAndSample c n = liftIO $ fmap V2.unCounterSample . V2.addAndSample n =<< getCounter c
+addAndSample c n = liftIO $ fmap V2.unCounterSample . V2.addAndSample n =<< load c
 {-# INLINE addAndSample #-}
 
 

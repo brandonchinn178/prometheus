@@ -11,6 +11,7 @@ module Prometheus.V3.MetricName (
     toName,
 ) where
 
+import Data.Hashable (Hashable)
 import Data.Proxy (Proxy (..))
 import Data.String (IsString (..))
 import Data.Text (Text)
@@ -26,7 +27,7 @@ import qualified Prometheus.V3.Name as Name
 -- https://prometheus.io/docs/concepts/data_model/
 newtype MetricName = MetricName Name
     deriving stock (Show)
-    deriving newtype (Eq, Ord)
+    deriving newtype (Eq, Ord, Hashable)
 
 
 instance IsString MetricName where

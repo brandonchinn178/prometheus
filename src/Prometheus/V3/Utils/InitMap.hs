@@ -6,6 +6,12 @@ module Prometheus.V3.Utils.InitMap (
     fromList,
     toList,
     getOrCreate,
+    getOrCreate',
+    GetOrCreateResult (..),
+    fromGetOrCreateResult,
+
+    -- * Lifted functions
+    delete,
 ) where
 
 import Data.Bifunctor (first)
@@ -44,16 +50,38 @@ toList (InitMap m) = [(k, v) | (k, Ready v) <- HashMap.toList m]
 
 
 getOrCreate :: (Hashable k) => k -> IO v -> IORef (InitMap k v) -> IO v
-getOrCreate key createVal initMapRef = mask $ \unmask -> do
+getOrCreate key createVal initMapRef =
+    fromGetOrCreateResult <$> getOrCreate' key createVal initMapRef
+
+
+data GetOrCreateResult a
+    = Existed a
+    | Created a
+
+
+instance Functor GetOrCreateResult where
+    fmap f = \case
+        Existed a -> Existed (f a)
+        Created a -> Created (f a)
+
+
+fromGetOrCreateResult :: GetOrCreateResult a -> a
+fromGetOrCreateResult = \case
+    Existed a -> a
+    Created a -> a
+
+
+getOrCreate' :: (Hashable k) => k -> IO v -> IORef (InitMap k v) -> IO (GetOrCreateResult v)
+getOrCreate' key createVal initMapRef = mask $ \unmask -> do
     initVar0 <- newEmptyMVar
     initState <-
         atomicModifyIORef' initMapRef $
             first InitMap . insertIfMissing key (Init initVar0) . unInitMap
     case initState of
         -- Child is already initialized
-        Just (Ready child) -> pure child
+        Just (Ready child) -> pure (Existed child)
         -- Child is being initialized right now in another thread
-        Just (Init initVar) -> either throwIO pure =<< readMVar initVar
+        Just (Init initVar) -> either throwIO (pure . Existed) =<< readMVar initVar
         -- Child needs initialization
         Nothing -> do
             result <- trySyncOrAsync $ unmask createVal
@@ -63,7 +91,7 @@ getOrCreate key createVal initMapRef = mask $ \unmask -> do
             -- Unblock waiting threads
             putMVar initVar0 result
             -- Return result for this thread
-            either throwIO pure result
+            either throwIO (pure . Created) result
   where
     insertIfMissing :: (Hashable k) => k -> v -> HashMap k v -> (HashMap k v, Maybe v)
     insertIfMissing k v =
@@ -79,3 +107,7 @@ getOrCreate key createVal initMapRef = mask $ \unmask -> do
 
     atomicModifyIORef'_ :: IORef a -> (a -> a) -> IO ()
     atomicModifyIORef'_ ref f = atomicModifyIORef' ref $ \a -> (f a, ())
+
+
+delete :: (Hashable k) => k -> InitMap k v -> InitMap k v
+delete k = InitMap . HashMap.delete k . unInitMap

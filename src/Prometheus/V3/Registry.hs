@@ -1,4 +1,6 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -15,6 +17,10 @@ module Prometheus.V3.Registry (
     registerTo,
     unregisterFrom,
     ToCollector,
+
+    -- * getOrRegister
+    getOrRegister,
+    getOrRegisterTo,
 
     -- * Sampling
     RegistrySample,
@@ -37,16 +43,28 @@ import Prometheus.V3.Metric.Base (
     getMetricType,
  )
 import Prometheus.V3.Sample (Sample)
+import Prometheus.V3.Utils.InitMap (InitMap)
+import qualified Prometheus.V3.Utils.InitMap as InitMap
 import System.IO.Unsafe (unsafePerformIO)
-import UnliftIO.Exception (Exception, impureThrow)
+import Type.Reflection (SomeTypeRep (..), TypeRep, Typeable, eqTypeRep, typeOf, type (:~~:) (HRefl))
+import UnliftIO.Exception (Exception, impureThrow, throwIO)
 import UnliftIO.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 
 
-newtype Registry = Registry (IORef (Map MetricName Collector))
+newtype Registry = Registry (IORef (InitMap MetricName SomeCollector))
+
+
+data SomeCollector
+    = forall a.
+      SomeCollector
+    { collector :: Collector
+    , typeRep :: TypeRep a
+    , result :: RegisterResult a
+    }
 
 
 new :: (MonadIO m) => m Registry
-new = Registry <$> newIORef Map.empty
+new = Registry <$> newIORef InitMap.empty
 
 
 globalRegistry :: Registry
@@ -54,7 +72,7 @@ globalRegistry = unsafePerformIO new
 {-# OPAQUE globalRegistry #-}
 
 
-class ToCollector a where
+class (Typeable a) => ToCollector a where
     type RegisterResult a
     getCollectorName :: a -> MetricName
     getCollectorDescription :: a -> Description
@@ -68,7 +86,7 @@ instance ToCollector Collector where
     getCollectorType = (.type_)
     initCollectorResult = pure
     getCollectorSample _ = (.getSamples)
-instance (IsMetric a) => ToCollector (Metric a) where
+instance (Typeable a, IsMetric a) => ToCollector (Metric a) where
     type RegisterResult (Metric a) = a
     getCollectorName = (.name)
     getCollectorDescription = (.description)
@@ -87,20 +105,48 @@ register = unsafePerformIO . registerTo globalRegistry
 
 -- | Register the given metric with the given registry.
 registerTo :: (ToCollector a) => Registry -> a -> IO (RegisterResult a)
-registerTo (Registry registryMapRef) a = do
-    res <- initCollectorResult a
-    let collector =
-            Collector
-                { name = getCollectorName a
-                , description = getCollectorDescription a
-                , type_ = getCollectorType a
-                , getSamples = getCollectorSample a res
-                }
-    atomicModifyIORef' registryMapRef $ \registryMap ->
-        (Map.insertWithKey collision collector.name collector registryMap, ())
-    pure res
+registerTo registry a =
+    getOrRegisterTo' registry a >>= \case
+        InitMap.Created res -> pure res
+        InitMap.Existed _ -> throwIO (MetricRegisteredMultipleTimesError name)
   where
-    collision k _ _ = impureThrow (MetricRegisteredMultipleTimesError k)
+    name = getCollectorName a
+
+
+getOrRegister :: (ToCollector a) => a -> IO (RegisterResult a)
+getOrRegister = getOrRegisterTo globalRegistry
+
+
+getOrRegisterTo :: (ToCollector a) => Registry -> a -> IO (RegisterResult a)
+getOrRegisterTo registry = fmap InitMap.fromGetOrCreateResult . getOrRegisterTo' registry
+
+
+getOrRegisterTo' :: forall a. (ToCollector a) => Registry -> a -> IO (InitMap.GetOrCreateResult (RegisterResult a))
+getOrRegisterTo' (Registry registryMapRef) a =
+    fmap getResult <$> InitMap.getOrCreate' name initCollector registryMapRef
+  where
+    inputType = typeOf a
+    name = getCollectorName a
+    initCollector = do
+        result <- initCollectorResult a
+        pure
+            SomeCollector
+                { collector =
+                    Collector
+                        { name
+                        , description = getCollectorDescription a
+                        , type_ = getCollectorType a
+                        , getSamples = getCollectorSample a result
+                        }
+                , typeRep = inputType
+                , result
+                }
+
+    getResult :: SomeCollector -> RegisterResult a
+    getResult SomeCollector{typeRep, result} =
+        case eqTypeRep typeRep inputType of
+            Just HRefl -> result
+            Nothing -> impureThrow $ MetricRegisteredDifferentTypeError name (SomeTypeRep inputType)
 
 
 newtype MetricRegisteredMultipleTimesError = MetricRegisteredMultipleTimesError MetricName
@@ -108,11 +154,16 @@ newtype MetricRegisteredMultipleTimesError = MetricRegisteredMultipleTimesError 
 instance Exception MetricRegisteredMultipleTimesError
 
 
+data MetricRegisteredDifferentTypeError = MetricRegisteredDifferentTypeError MetricName SomeTypeRep
+    deriving (Show)
+instance Exception MetricRegisteredDifferentTypeError
+
+
 -- | Unregister the given metric from the given registry.
 unregisterFrom :: (ToCollector a) => Registry -> a -> IO ()
 unregisterFrom (Registry registryMapRef) a = do
     atomicModifyIORef' registryMapRef $ \registryMap ->
-        (Map.delete (getCollectorName a) registryMap, ())
+        (InitMap.delete (getCollectorName a) registryMap, ())
 
 
 type RegistrySample = Map MetricName (Collector, [Sample])
@@ -120,8 +171,8 @@ type RegistrySample = Map MetricName (Collector, [Sample])
 
 sample :: (MonadIO m) => Registry -> m RegistrySample
 sample (Registry registryMapRef) = do
-    registryMap <- readIORef registryMapRef
-    liftIO . forM registryMap $ \collector -> do
+    registryMap <- Map.fromList . InitMap.toList <$> readIORef registryMapRef
+    liftIO . forM registryMap $ \SomeCollector{collector} -> do
         samples <- collector.getSamples
         -- TODO: revalidate labels with same logic as Labelled, for custom collectors
         pure (collector, samples)

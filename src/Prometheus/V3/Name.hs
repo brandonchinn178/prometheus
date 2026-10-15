@@ -15,6 +15,7 @@ module Prometheus.V3.Name (
 ) where
 
 import Data.Char (isDigit)
+import Data.Hashable (Hashable (..))
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -40,6 +41,10 @@ instance Eq Name where
 -- use 'showName'.
 instance Ord Name where
     Name s1 _ `compare` Name s2 _ = s1 `compare` s2
+
+
+instance Hashable Name where
+    hashWithSalt n (Name s _) = hashWithSalt n s
 
 
 toText :: Name -> Text
