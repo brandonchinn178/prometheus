@@ -12,9 +12,6 @@
 -- The recommended usage is to initialize the metrics as top-level global
 -- variables in the same file as the functions they're instrumenting.
 --
--- Note: globally registered metrics are only registered when it's used for the
--- first time, due to laziness.
---
 -- @
 -- {-# LANGUAGE OverloadedStrings #-}
 --
@@ -52,6 +49,15 @@
 -- main = do
 --   Prom.serveMetrics 9090 -- Serves metrics on separate thread
 -- @
+--
+-- Warnings:
+--   * The @OPAQUE@ pragma is necessary to avoid call-sites inlining their own
+--     metric instead of sharing a global one
+--   * Top-level gloobal metrics are only registered when they're used for the
+--     first time, due to laziness
+--   * Top-level global metrics should only be used as top-level constants; e.g.
+--     @Text -> Prom.Counter@ or @(Prom.Counter, Prom.Counter)@ will not work as
+--     expected.
 --
 -- === Alternative: Avoid OPAQUE pragma
 --
