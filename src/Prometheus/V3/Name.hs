@@ -47,6 +47,14 @@ instance Hashable Name where
     hashWithSalt n (Name s _) = hashWithSalt n s
 
 
+instance Semigroup Name where
+    Name s1 n1 <> Name s2 n2 =
+      Name (s1 <> s2) $
+        case (n1, n2) of
+          (NoNeedsEscape, NoNeedsEscape) -> NoNeedsEscape
+          _ -> NeedsEscape
+
+
 toText :: Name -> Text
 toText (Name s _) = s
 

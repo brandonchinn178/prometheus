@@ -27,7 +27,7 @@ import qualified Prometheus.V3.Name as Name
 -- https://prometheus.io/docs/concepts/data_model/
 newtype MetricName = MetricName Name
     deriving stock (Show)
-    deriving newtype (Eq, Ord, Hashable)
+    deriving newtype (Eq, Ord, Hashable, Semigroup)
 
 
 instance IsString MetricName where
